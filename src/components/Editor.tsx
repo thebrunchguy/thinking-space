@@ -7,18 +7,26 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Highlight from "@tiptap/extension-highlight";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { Document } from "@/lib/documents";
+import { SuggestionDelete, SuggestionAdd } from "@/extensions/suggestion";
+import { SuggestionControls } from "./SuggestionControls";
 
 interface EditorProps {
   document: Document;
   onUpdate: (updates: Partial<Document>) => void;
 }
 
+let suggestionCounter = 0;
+function nextSuggestionId() {
+  return `suggestion-${Date.now()}-${++suggestionCounter}`;
+}
+
 export function Editor({ document, onUpdate }: EditorProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const isInternalUpdate = useRef(false);
+  const [isLoadingSuggestion, setIsLoadingSuggestion] = useState(false);
 
   const editor = useEditor(
     {
@@ -37,6 +45,8 @@ export function Editor({ document, onUpdate }: EditorProps) {
             class: "text-accent underline",
           },
         }),
+        SuggestionDelete,
+        SuggestionAdd,
       ],
       content: document.content,
       editorProps: {
@@ -110,11 +120,78 @@ export function Editor({ document, onUpdate }: EditorProps) {
       .run();
   }, [editor]);
 
+  const requestSuggestion = useCallback(async () => {
+    if (!editor) return;
+
+    const { from, to } = editor.state.selection;
+    if (from === to) return; // No selection
+
+    const selectedText = editor.state.doc.textBetween(from, to, " ");
+    if (!selectedText.trim()) return;
+
+    const fullDocument = editor.state.doc.textContent;
+
+    setIsLoadingSuggestion(true);
+
+    try {
+      const res = await fetch("/api/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedText, fullDocument }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        console.error("Suggestion error:", err.error);
+        return;
+      }
+
+      const { original, suggested } = await res.json();
+
+      if (original === suggested) return; // No changes
+
+      const suggestionId = nextSuggestionId();
+
+      // Apply the suggestion as inline marks:
+      // 1. Mark the selected (original) text as "delete"
+      // 2. Insert the suggested text right after with "add" mark
+      editor
+        .chain()
+        .command(({ tr }) => {
+          // Mark original text as deletion
+          const deleteMarkType = editor.schema.marks.suggestionDelete;
+          if (deleteMarkType) {
+            tr.addMark(
+              from,
+              to,
+              deleteMarkType.create({ suggestionId })
+            );
+          }
+          return true;
+        })
+        .command(({ tr }) => {
+          // Insert suggested text after the original, with add mark
+          const addMarkType = editor.schema.marks.suggestionAdd;
+          if (addMarkType) {
+            const mark = addMarkType.create({ suggestionId });
+            const textNode = editor.schema.text(suggested, [mark]);
+            tr.insert(to, textNode);
+          }
+          return true;
+        })
+        .run();
+    } catch (err) {
+      console.error("Failed to get suggestion:", err);
+    } finally {
+      setIsLoadingSuggestion(false);
+    }
+  }, [editor]);
+
   if (!editor) return null;
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[720px] mx-auto px-6 py-8 md:px-8 md:py-12">
+      <div className="max-w-[720px] mx-auto px-6 py-8 md:px-8 md:py-12 relative">
         {/* Title */}
         <textarea
           ref={titleRef}
@@ -210,10 +287,36 @@ export function Editor({ document, onUpdate }: EditorProps) {
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
             </svg>
           </BubbleButton>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          {/* AI Suggest Button */}
+          <BubbleButton
+            onClick={requestSuggestion}
+            isActive={false}
+            title="AI Suggest (⌘+J)"
+            disabled={isLoadingSuggestion}
+          >
+            {isLoadingSuggestion ? (
+              <span className="text-sm animate-pulse">⏳</span>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2v4" />
+                <path d="m6.34 6.34 2.83 2.83" />
+                <path d="M2 12h4" />
+                <path d="m6.34 17.66 2.83-2.83" />
+                <path d="M12 18v4" />
+                <path d="m17.66 17.66-2.83-2.83" />
+                <path d="M18 12h4" />
+                <path d="m17.66 6.34-2.83 2.83" />
+              </svg>
+            )}
+          </BubbleButton>
         </BubbleMenu>
 
         {/* Editor Content */}
         <EditorContent editor={editor} />
+
+        {/* Suggestion accept/reject controls */}
+        <SuggestionControls editor={editor} />
       </div>
     </div>
   );
@@ -224,20 +327,25 @@ function BubbleButton({
   isActive,
   title,
   children,
+  disabled,
 }: {
   onClick: () => void;
   isActive: boolean;
   title: string;
   children: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
+      disabled={disabled}
       className={`p-1.5 rounded-md transition-colors ${
-        isActive
-          ? "bg-accent text-accent-foreground"
-          : "hover:bg-muted text-foreground"
+        disabled
+          ? "opacity-50 cursor-not-allowed"
+          : isActive
+            ? "bg-accent text-accent-foreground"
+            : "hover:bg-muted text-foreground"
       }`}
     >
       {children}

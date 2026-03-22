@@ -148,6 +148,93 @@ body {
   height: 0;
 }
 
+/* Suggestion styles */
+.suggestion-delete {
+  background-color: #fecaca;
+  text-decoration: line-through;
+  text-decoration-color: #dc2626;
+  color: #991b1b;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.dark .suggestion-delete {
+  background-color: rgba(220, 38, 38, 0.2);
+  text-decoration-color: #f87171;
+  color: #fca5a5;
+}
+
+.suggestion-add {
+  background-color: #bbf7d0;
+  color: #166534;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.dark .suggestion-add {
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
+.suggestion-controls-container {
+  position: relative;
+  pointer-events: none;
+}
+
+.suggestion-tooltip {
+  display: inline-flex;
+  gap: 2px;
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.suggestion-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.suggestion-btn:hover {
+  transform: scale(1.1);
+}
+
+.suggestion-btn-accept {
+  color: #16a34a;
+}
+
+.suggestion-btn-accept:hover {
+  background: #bbf7d0;
+  border-color: #16a34a;
+}
+
+.dark .suggestion-btn-accept:hover {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: #22c55e;
+}
+
+.suggestion-btn-reject {
+  color: #dc2626;
+}
+
+.suggestion-btn-reject:hover {
+  background: #fecaca;
+  border-color: #dc2626;
+}
+
+.dark .suggestion-btn-reject:hover {
+  background: rgba(220, 38, 38, 0.2);
+  border-color: #f87171;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
