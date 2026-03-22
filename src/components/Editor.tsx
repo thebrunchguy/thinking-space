@@ -9,12 +9,14 @@ import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { Document } from "@/lib/documents";
+import { DocumentContext } from "@/lib/context";
 import { SuggestionDelete, SuggestionAdd } from "@/extensions/suggestion";
 import { SuggestionControls } from "./SuggestionControls";
 
 interface EditorProps {
   document: Document;
   onUpdate: (updates: Partial<Document>) => void;
+  context?: DocumentContext;
 }
 
 let suggestionCounter = 0;
@@ -22,7 +24,7 @@ function nextSuggestionId() {
   return `suggestion-${Date.now()}-${++suggestionCounter}`;
 }
 
-export function Editor({ document, onUpdate }: EditorProps) {
+export function Editor({ document, onUpdate, context }: EditorProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const isInternalUpdate = useRef(false);
@@ -137,7 +139,13 @@ export function Editor({ document, onUpdate }: EditorProps) {
       const res = await fetch("/api/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedText, fullDocument }),
+        body: JSON.stringify({
+          selectedText,
+          fullDocument,
+          styleGuide: context?.styleGuide || "",
+          referenceNotes: context?.referenceNotes || "",
+          instructions: context?.instructions || "",
+        }),
       });
 
       if (!res.ok) {
@@ -185,7 +193,7 @@ export function Editor({ document, onUpdate }: EditorProps) {
     } finally {
       setIsLoadingSuggestion(false);
     }
-  }, [editor]);
+  }, [editor, context]);
 
   if (!editor) return null;
 
