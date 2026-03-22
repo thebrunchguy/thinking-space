@@ -1,9 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 interface LibraryContext {
   name: string;
@@ -61,6 +58,100 @@ function buildSystemPrompt(libraries: LibraryContext[]): string {
   return prompt;
 }
 
+function buildUserMessage(
+  selectedText: string,
+  fullDocument: string,
+  libraries: LibraryContext[],
+  instructions?: string
+): string {
+  let userMessage = "";
+
+  const referenceSamples = libraries
+    .filter((l) => l.referenceSamples?.trim())
+    .map((l) => `Examples from "${l.name}" style:\n${l.referenceSamples.trim()}`);
+
+  if (referenceSamples.length > 0) {
+    userMessage += `Reference writing samples (match this voice and style):\n\n${referenceSamples.join("\n\n---\n\n")}\n\n---\n\n`;
+  }
+
+  userMessage += `Here is the full document for context:\n\n---\n${fullDocument}\n---\n\n`;
+
+  const instruction =
+    instructions?.trim() || "Improve clarity, grammar, and flow";
+
+  userMessage += `Please improve this selected passage. Instruction: ${instruction}\n\n${selectedText}`;
+
+  return userMessage;
+}
+
+async function tryAnthropic(
+  systemPrompt: string,
+  userMessage: string
+): Promise<string> {
+  const client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+  });
+
+  const content = message.content[0];
+  if (content.type !== "text") {
+    throw new Error("Unexpected response type from Anthropic");
+  }
+  return content.text;
+}
+
+async function tryOpenAI(
+  systemPrompt: string,
+  userMessage: string
+): Promise<string> {
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+
+  const completion = await client.chat.completions.create({
+    model: "gpt-4o",
+    max_tokens: 1024,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ],
+  });
+
+  const text = completion.choices[0]?.message?.content;
+  if (!text) {
+    throw new Error("Unexpected response from OpenAI");
+  }
+  return text;
+}
+
+async function tryBackupAnthropic(
+  systemPrompt: string,
+  userMessage: string
+): Promise<string> {
+  const client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_BACKUP_API_KEY,
+  });
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+  });
+
+  const content = message.content[0];
+  if (content.type !== "text") {
+    throw new Error("Unexpected response type from Anthropic backup");
+  }
+  return content.text;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const {
@@ -77,57 +168,62 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return NextResponse.json(
-        { error: "ANTHROPIC_API_KEY not configured" },
-        { status: 500 }
-      );
-    }
-
     const systemPrompt = buildSystemPrompt(libraries as LibraryContext[]);
+    const userMessage = buildUserMessage(
+      selectedText,
+      fullDocument,
+      libraries as LibraryContext[],
+      instructions
+    );
 
-    let userMessage = "";
+    // Try providers in order: Anthropic → Backup Anthropic → OpenAI
+    const providers: { name: string; fn: () => Promise<string>; available: boolean }[] = [
+      {
+        name: "Anthropic",
+        fn: () => tryAnthropic(systemPrompt, userMessage),
+        available: !!process.env.ANTHROPIC_API_KEY,
+      },
+      {
+        name: "Anthropic (backup)",
+        fn: () => tryBackupAnthropic(systemPrompt, userMessage),
+        available: !!process.env.ANTHROPIC_BACKUP_API_KEY,
+      },
+      {
+        name: "OpenAI",
+        fn: () => tryOpenAI(systemPrompt, userMessage),
+        available: !!process.env.OPENAI_API_KEY,
+      },
+    ];
 
-    // Add reference samples from libraries
-    const referenceSamples = (libraries as LibraryContext[])
-      .filter((l) => l.referenceSamples?.trim())
-      .map((l) => `Examples from "${l.name}" style:\n${l.referenceSamples.trim()}`);
+    const availableProviders = providers.filter((p) => p.available);
 
-    if (referenceSamples.length > 0) {
-      userMessage += `Reference writing samples (match this voice and style):\n\n${referenceSamples.join("\n\n---\n\n")}\n\n---\n\n`;
-    }
-
-    userMessage += `Here is the full document for context:\n\n---\n${fullDocument}\n---\n\n`;
-
-    const instruction =
-      instructions?.trim() || "Improve clarity, grammar, and flow";
-
-    userMessage += `Please improve this selected passage. Instruction: ${instruction}\n\n${selectedText}`;
-
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: userMessage,
-        },
-      ],
-    });
-
-    const content = message.content[0];
-    if (content.type !== "text") {
+    if (availableProviders.length === 0) {
       return NextResponse.json(
-        { error: "Unexpected response type" },
+        { error: "No API keys configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      original: selectedText,
-      suggested: content.text,
-    });
+    let lastError: Error | null = null;
+
+    for (const provider of availableProviders) {
+      try {
+        console.log(`Trying ${provider.name}...`);
+        const text = await provider.fn();
+        return NextResponse.json({
+          original: selectedText,
+          suggested: text,
+        });
+      } catch (error) {
+        console.error(`${provider.name} failed:`, (error as Error).message);
+        lastError = error as Error;
+      }
+    }
+
+    return NextResponse.json(
+      { error: `All providers failed. Last error: ${lastError?.message}` },
+      { status: 500 }
+    );
   } catch (error) {
     console.error("Suggestion API error:", error);
     return NextResponse.json(
