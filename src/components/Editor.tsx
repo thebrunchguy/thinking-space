@@ -1,0 +1,246 @@
+"use client";
+
+import { useEditor, EditorContent } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
+import StarterKit from "@tiptap/starter-kit";
+import Placeholder from "@tiptap/extension-placeholder";
+import Highlight from "@tiptap/extension-highlight";
+import Underline from "@tiptap/extension-underline";
+import Link from "@tiptap/extension-link";
+import { useEffect, useRef, useCallback } from "react";
+import { Document } from "@/lib/documents";
+
+interface EditorProps {
+  document: Document;
+  onUpdate: (updates: Partial<Document>) => void;
+}
+
+export function Editor({ document, onUpdate }: EditorProps) {
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const isInternalUpdate = useRef(false);
+
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({
+          heading: { levels: [1, 2, 3] },
+        }),
+        Placeholder.configure({
+          placeholder: "Start writing...",
+        }),
+        Highlight,
+        Underline,
+        Link.configure({
+          openOnClick: false,
+          HTMLAttributes: {
+            class: "text-accent underline",
+          },
+        }),
+      ],
+      content: document.content,
+      editorProps: {
+        attributes: {
+          class: "prose-editor focus:outline-none",
+        },
+      },
+      onUpdate: ({ editor }) => {
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+        }
+        saveTimeoutRef.current = setTimeout(() => {
+          onUpdate({ content: editor.getHTML() });
+        }, 300);
+      },
+    },
+    [document.id]
+  );
+
+  // Sync content when document changes
+  useEffect(() => {
+    if (editor && !isInternalUpdate.current) {
+      const currentContent = editor.getHTML();
+      if (currentContent !== document.content) {
+        editor.commands.setContent(document.content || "");
+      }
+    }
+    isInternalUpdate.current = false;
+  }, [document.id, document.content, editor]);
+
+  const handleTitleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      onUpdate({ title: e.target.value });
+    },
+    [onUpdate]
+  );
+
+  const handleTitleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        editor?.commands.focus("start");
+      }
+    },
+    [editor]
+  );
+
+  // Auto-resize title
+  useEffect(() => {
+    const el = titleRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
+    }
+  }, [document.title]);
+
+  const setLink = useCallback(() => {
+    if (!editor) return;
+    const previousUrl = editor.getAttributes("link").href;
+    const url = window.prompt("URL", previousUrl);
+    if (url === null) return;
+    if (url === "") {
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+      return;
+    }
+    editor
+      .chain()
+      .focus()
+      .extendMarkRange("link")
+      .setLink({ href: url })
+      .run();
+  }, [editor]);
+
+  if (!editor) return null;
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <div className="max-w-[720px] mx-auto px-6 py-8 md:px-8 md:py-12">
+        {/* Title */}
+        <textarea
+          ref={titleRef}
+          value={document.title}
+          onChange={handleTitleChange}
+          onKeyDown={handleTitleKeyDown}
+          placeholder="Untitled"
+          className="w-full text-4xl md:text-5xl font-bold bg-transparent border-none outline-none resize-none placeholder:text-muted-foreground/40 leading-tight mb-6"
+          rows={1}
+        />
+
+        {/* Bubble Menu */}
+        <BubbleMenu
+          editor={editor}
+          className="flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-lg px-1 py-1"
+        >
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            isActive={editor.isActive("bold")}
+            title="Bold"
+          >
+            <span className="font-bold text-sm">B</span>
+          </BubbleButton>
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            isActive={editor.isActive("italic")}
+            title="Italic"
+          >
+            <span className="italic text-sm">I</span>
+          </BubbleButton>
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleUnderline().run()}
+            isActive={editor.isActive("underline")}
+            title="Underline"
+          >
+            <span className="underline text-sm">U</span>
+          </BubbleButton>
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleStrike().run()}
+            isActive={editor.isActive("strike")}
+            title="Strikethrough"
+          >
+            <span className="line-through text-sm">S</span>
+          </BubbleButton>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          <BubbleButton
+            onClick={() =>
+              editor.chain().focus().toggleHeading({ level: 2 }).run()
+            }
+            isActive={editor.isActive("heading", { level: 2 })}
+            title="Heading"
+          >
+            <span className="text-sm font-semibold">H</span>
+          </BubbleButton>
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+            isActive={editor.isActive("blockquote")}
+            title="Quote"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V21z" />
+              <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3z" />
+            </svg>
+          </BubbleButton>
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleCode().run()}
+            isActive={editor.isActive("code")}
+            title="Code"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+          </BubbleButton>
+          <BubbleButton
+            onClick={() => editor.chain().focus().toggleHighlight().run()}
+            isActive={editor.isActive("highlight")}
+            title="Highlight"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m9 11-6 6v3h9l3-3" />
+              <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+            </svg>
+          </BubbleButton>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          <BubbleButton
+            onClick={setLink}
+            isActive={editor.isActive("link")}
+            title="Link"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+          </BubbleButton>
+        </BubbleMenu>
+
+        {/* Editor Content */}
+        <EditorContent editor={editor} />
+      </div>
+    </div>
+  );
+}
+
+function BubbleButton({
+  onClick,
+  isActive,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  isActive: boolean;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`p-1.5 rounded-md transition-colors ${
+        isActive
+          ? "bg-accent text-accent-foreground"
+          : "hover:bg-muted text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
