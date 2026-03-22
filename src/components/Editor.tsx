@@ -9,14 +9,15 @@ import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { Document } from "@/lib/documents";
-import { DocumentContext } from "@/lib/context";
+import { Library } from "@/lib/libraries";
 import { SuggestionDelete, SuggestionAdd } from "@/extensions/suggestion";
 import { SuggestionControls } from "./SuggestionControls";
 
 interface EditorProps {
   document: Document;
   onUpdate: (updates: Partial<Document>) => void;
-  context?: DocumentContext;
+  libraries?: Library[];
+  instructions?: string;
 }
 
 let suggestionCounter = 0;
@@ -24,7 +25,7 @@ function nextSuggestionId() {
   return `suggestion-${Date.now()}-${++suggestionCounter}`;
 }
 
-export function Editor({ document, onUpdate, context }: EditorProps) {
+export function Editor({ document, onUpdate, libraries = [], instructions = "" }: EditorProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const isInternalUpdate = useRef(false);
@@ -143,9 +144,14 @@ export function Editor({ document, onUpdate, context }: EditorProps) {
         body: JSON.stringify({
           selectedText,
           fullDocument,
-          styleGuide: context?.styleGuide || "",
-          referenceNotes: context?.referenceNotes || "",
-          instructions: context?.instructions || "",
+          libraries: libraries.map((l) => ({
+            name: l.name,
+            styleRules: l.styleRules,
+            referenceSamples: l.referenceSamples,
+            vocabulary: l.vocabulary,
+            structureNotes: l.structureNotes,
+          })),
+          instructions,
         }),
       });
 
@@ -194,7 +200,7 @@ export function Editor({ document, onUpdate, context }: EditorProps) {
     } finally {
       setIsLoadingSuggestion(false);
     }
-  }, [editor, context]);
+  }, [editor, libraries, instructions]);
 
   if (!editor) return null;
 

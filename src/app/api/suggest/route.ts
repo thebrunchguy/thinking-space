@@ -5,6 +5,14 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+interface LibraryContext {
+  name: string;
+  styleRules: string;
+  referenceSamples: string;
+  vocabulary: string;
+  structureNotes: string;
+}
+
 const BASE_SYSTEM_PROMPT = `You are a writing assistant that improves text. You will receive:
 1. The full document for context
 2. A specific selected passage to improve
@@ -17,12 +25,32 @@ Do NOT:
 - Wrap your response in quotes or markdown
 - Include any explanation of your changes`;
 
-function buildSystemPrompt(styleGuide?: string): string {
+function buildSystemPrompt(libraries: LibraryContext[]): string {
   let prompt = BASE_SYSTEM_PROMPT;
 
-  if (styleGuide?.trim()) {
-    prompt += `\n\nThe author has provided these style guidelines. Follow them closely:\n${styleGuide.trim()}`;
-  } else {
+  const styleRules = libraries
+    .map((l) => l.styleRules?.trim())
+    .filter(Boolean);
+  const vocabulary = libraries
+    .map((l) => l.vocabulary?.trim())
+    .filter(Boolean);
+  const structureNotes = libraries
+    .map((l) => l.structureNotes?.trim())
+    .filter(Boolean);
+
+  if (styleRules.length > 0) {
+    prompt += `\n\nThe author's style rules (follow these closely):\n${styleRules.join("\n\n")}`;
+  }
+
+  if (vocabulary.length > 0) {
+    prompt += `\n\nVocabulary preferences:\n${vocabulary.join("\n\n")}`;
+  }
+
+  if (structureNotes.length > 0) {
+    prompt += `\n\nStructure guidelines:\n${structureNotes.join("\n\n")}`;
+  }
+
+  if (styleRules.length === 0 && vocabulary.length === 0 && structureNotes.length === 0) {
     prompt += `\n\nFocus on:
 - Clarity and readability
 - Grammar and punctuation
@@ -38,8 +66,7 @@ export async function POST(request: NextRequest) {
     const {
       selectedText,
       fullDocument,
-      styleGuide,
-      referenceNotes,
+      libraries = [],
       instructions,
     } = await request.json();
 
@@ -57,19 +84,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const systemPrompt = buildSystemPrompt(styleGuide);
+    const systemPrompt = buildSystemPrompt(libraries as LibraryContext[]);
 
     let userMessage = "";
 
-    if (referenceNotes?.trim()) {
-      userMessage += `Reference notes and background context:\n\n${referenceNotes.trim()}\n\n---\n\n`;
+    // Add reference samples from libraries
+    const referenceSamples = (libraries as LibraryContext[])
+      .filter((l) => l.referenceSamples?.trim())
+      .map((l) => `Examples from "${l.name}" style:\n${l.referenceSamples.trim()}`);
+
+    if (referenceSamples.length > 0) {
+      userMessage += `Reference writing samples (match this voice and style):\n\n${referenceSamples.join("\n\n---\n\n")}\n\n---\n\n`;
     }
 
     userMessage += `Here is the full document for context:\n\n---\n${fullDocument}\n---\n\n`;
 
     const instruction =
-      instructions?.trim() ||
-      "Improve clarity, grammar, and flow";
+      instructions?.trim() || "Improve clarity, grammar, and flow";
 
     userMessage += `Please improve this selected passage. Instruction: ${instruction}\n\n${selectedText}`;
 

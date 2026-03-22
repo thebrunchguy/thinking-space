@@ -2,6 +2,7 @@ export interface Document {
   id: string;
   title: string;
   content: string;
+  libraryIds: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -17,6 +18,7 @@ export function createDocument(): Document {
     id: generateId(),
     title: "",
     content: "",
+    libraryIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
