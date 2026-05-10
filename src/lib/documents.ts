@@ -1,8 +1,16 @@
+export interface Note {
+  id: string;
+  text: string;
+  section: string;
+  savedAt: number;
+}
+
 export interface Document {
   id: string;
   title: string;
   content: string;
   libraryIds: string[];
+  notes: Note[];
   createdAt: number;
   updatedAt: number;
 }
@@ -19,6 +27,7 @@ export function createDocument(): Document {
     title: "",
     content: "",
     libraryIds: [],
+    notes: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -29,7 +38,10 @@ export function loadDocuments(): Document[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const docs = JSON.parse(raw) as Document[];
+    const docs = (JSON.parse(raw) as Document[]).map((d) => ({
+      ...d,
+      notes: d.notes ?? [],
+    }));
     return docs.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {
     return [];

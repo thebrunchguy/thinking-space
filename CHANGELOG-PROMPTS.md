@@ -1,0 +1,48 @@
+# Prompt Changelog
+
+A running log of feature decisions and suggestions made during development.
+
+---
+
+- **2026-05-09 12:00** — New: Add Cmd+K chat panel for discussing text improvements before applying suggestions
+  - *"I want to be able to select text and then press command K to then have a left side bar open and chat about way to improve it (almost like a mini planning mode) and then to be like make suggestion or something and it'll make a suggestion change like we currently do when I press command J."*
+- **2026-05-09 12:17** — New: Move chat panel to right side of editor
+  - *"can you put this on right side, not left side?"*
+- **2026-05-09 12:18** — New: Default chat panel to always visible with empty state
+  - *"can you default have the right side bar showing too"*
+- **2026-05-09 12:19** — New: Subtle grey sidebar colors, remove dividers, off-white Make Suggestion button
+  - *"can you make it so left side bar all same more subtle grey color (and the divider went away) and then right side bar make also more subtle grey color and make suggest not green but like a simpler whitish or offwhite"*
+- **2026-05-09 12:20** — New: Full-height sidebar background, collapsible right panel, keyboard shortcuts (⌘H left, ⌘J suggest, ⌘K chat, ⌘O right panel)
+  - *"still not background like should be from top to bottom of page - and also make right panel collapsable too. command H open and close left panel command J suggests changes for the current text select, command k opens chat on right panel and then command L opens and closes right panel with chat"*
+- **2026-05-09 12:25** — New: Change right panel toggle from ⌘L to ⌘O
+  - *"change command to open right panel to be command o instead of command l because command l already does something in my browser"*
+- **2026-05-09 12:36** — New: Phased chat flow — AI diagnoses 3-7 improvements as checkable items, user selects and adds context, then rewrites and applies as suggestion
+  - *"New approach for the rec. changes - I want it to surface 3-7 areas for improvement that are like 1-2 sentences. Then I want to check mark those, which will add them as context for things I agree worth changing or considering for a rewrite. Then I want to add more context (option) before pressing enter and seeing the rewrite."*
+- **2026-05-09 12:45** — New: Auto-append feature suggestions to a running prompt changelog
+  - *"Can you have a skill that runs each time I make a feature suggestion of sorts that adds this to a running markdown file of what was asked"*
+- **2026-05-09 12:46** — New: Include the user's specific prompt as a sub-bullet in the changelog
+  - *"can you also append as a sub bullet the specific ask or specific prompt"*
+- **2026-05-09 12:50** — New: Categorize improvement suggestions into groups (General, Clean Up, Structural) with colored indicators
+  - *"can you make it so there's categories of suggestions - like 'general' (right now), clean up (not specific, but like 'tone seems..' or things like that) and 'structural' like - would be stronger if you kicked off with 'big news:'.. right now you jump in too fast."*
+- **2026-05-09 12:55** — New: Auto-detect paragraph breaks in selection and switch to "Transition" mode with transition-focused feedback
+  - *"for highlights with a line in between, if I press command K, can you assume I want to figure out how I want to think about the transition? Can have it be like 'transition mode' instead of 'improvement mode' or something so I have different modes of feedback"*
+- **2026-05-09 13:05** — New: Transition mode shows high-level transition concepts with example text, select favorites + add comment, then get a specific suggestion to apply
+  - *"In transition mode, I want it to just suggest like potential transitions like 'high level concept of transition' as the section and then 1-2 examples of what that could look like. Then after I select 1-2 of them, I can also have a comment like 'These but a little smoother' and it'll come back with a specific suggestion for me to confirm and have it write in"*
+- **2026-05-09 17:38** — New: Transition rewrites should only output the bridging text (not rewrite surrounding paragraphs) and preserve line breaks/formatting
+  - *"I want it to mimic the same formatting of my text. So for instance it should have line breaks in the suggestion and this should just be placed in the middle of the two other lines (rather than a full rewrite of all surrounding context)"*
+- **2026-05-09 17:40** — New: Transition suggestions should only replace the divider line ("—"), not delete surrounding paragraphs
+  - *"The transition ones should try to avoid deleting current stuff because it's really supposed to sit as a replacement for the line itself in the middle which is just a placeholder for a more elegant transition that connects the two concepts"*
+- **2026-05-09 17:45** — New: Move Cmd+J suggestion results into the right sidebar panel, skip to rewrite directly (no checkboxes). Cmd+K keeps the diagnostic checkbox flow.
+  - *"I think I want these suggestions to also happen in the side bar. So if it's command J, still like same functionality but approve and reject in sidebar. Command K is like let me first confirm the general approach (checkboxes). So command J just sorta jumps to the suggested approach"*
+- **2026-05-09 17:50** — New: Persist documents as local .md files on disk alongside localStorage
+  - *"can you like make sure it's saved in a .md file locally when I make changes to content. Don't want just browser local storage. I even want this when working locally"*
+- **2026-05-10 00:00** — New: Dedicated /libraries page with expandable sidebar of example files per library, auto-generated style overview, and full file editor
+  - *"When I click on libraries, can you have it be a complete new page with a left side bar of all the specific files I want each library to reference. So for instance, it would be Tweets as the library as a heading on a left side bar and under the drop down there'd be a bunch of files which are example tweets I've written in the past... And then there's an auto-generate 'general overview' of tweets and each library that explains the general style and approach I have to writing tweets in my voice with certain rules. Almost like a system prompt for whenever tweets is a selected style."*
+- **2026-05-10 12:00** — New: Right sidebar tabs (Improve/Notes/Content) with ⌘M to cut-and-save highlighted text to Notes as a "save for later" section
+  - *"I want the right side bar (command O) to have tabs at the top. Core one is improve, but other is notes, last one is content (blank for now). If I press command M, it cuts the highlighted content, and puts it in notes. I do this when it's a piece of content I may want but not 100% sure on keeping in main writing."*
+- **2026-05-10 12:30** — New: Focus mode with section-based navigation — TOC sidebar (⌘G), scroll snapping between H1/H2/H3 sections, toggle in sidebar footer
+  - *"I want modes to view it - one where it's everything as is, another where it just has the main section showing (based on a header 3 or above). Then a lightweight table of contents on the left where I can jump to sections - bullets, hideable. Scrolling snaps to next section."*
+- **2026-05-10 13:00** — New: Context scope toggle in Improve tab — choose between full document, current section, or just highlighted text as context for AI edits
+  - *"I want a toggle in the 'improve' mode to choose what context is considered when making edits - entire doc, section, or just the highlighted text"*
+- **2026-05-10 15:30** — New: Editable AI suggestions before accepting, with feedback learning — edits are saved to libraries and included in future prompts
+  - *"I want to be able to make edits to the specific suggestion itself before I press confirm. And I want the library to take note on how I gave feedback or made suggestions to the changes in a way that will make it give better suggestions over time."*

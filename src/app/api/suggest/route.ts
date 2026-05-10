@@ -1,5 +1,4 @@
 import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
 
 interface LibraryContext {
@@ -8,6 +7,9 @@ interface LibraryContext {
   referenceSamples: string;
   vocabulary: string;
   structureNotes: string;
+  generatedOverview?: string;
+  exampleFiles?: { name: string; content: string }[];
+  feedback?: { aiSuggested: string; userEdited: string }[];
 }
 
 const BASE_SYSTEM_PROMPT = `You are a writing assistant that improves text. You will receive:
@@ -47,7 +49,27 @@ function buildSystemPrompt(libraries: LibraryContext[]): string {
     prompt += `\n\nStructure guidelines:\n${structureNotes.join("\n\n")}`;
   }
 
-  if (styleRules.length === 0 && vocabulary.length === 0 && structureNotes.length === 0) {
+  const overviews = libraries
+    .map((l) => l.generatedOverview?.trim())
+    .filter(Boolean);
+
+  if (overviews.length > 0) {
+    prompt += `\n\nStyle overview (follow this closely as it captures the author's voice):\n${overviews.join("\n\n")}`;
+  }
+
+  const feedbackEntries = libraries
+    .flatMap((l) => l.feedback || [])
+    .filter((f) => f.aiSuggested && f.userEdited);
+
+  if (feedbackEntries.length > 0) {
+    const examples = feedbackEntries
+      .slice(-20)
+      .map((f) => `- AI wrote "${f.aiSuggested.slice(0, 80)}" → author preferred "${f.userEdited.slice(0, 80)}"`)
+      .join("\n");
+    prompt += `\n\nThe author has previously corrected AI suggestions. Learn from these preferences:\n${examples}`;
+  }
+
+  if (styleRules.length === 0 && vocabulary.length === 0 && structureNotes.length === 0 && overviews.length === 0 && feedbackEntries.length === 0) {
     prompt += `\n\nFocus on:
 - Clarity and readability
 - Grammar and punctuation
@@ -70,8 +92,19 @@ function buildUserMessage(
     .filter((l) => l.referenceSamples?.trim())
     .map((l) => `Examples from "${l.name}" style:\n${l.referenceSamples.trim()}`);
 
-  if (referenceSamples.length > 0) {
-    userMessage += `Reference writing samples (match this voice and style):\n\n${referenceSamples.join("\n\n---\n\n")}\n\n---\n\n`;
+  // Include example files as additional reference samples
+  const exampleFileSamples = libraries
+    .filter((l) => l.exampleFiles && l.exampleFiles.length > 0)
+    .flatMap((l) =>
+      (l.exampleFiles || [])
+        .filter((f) => f.content?.trim())
+        .map((f) => `Example from "${l.name}" — "${f.name}":\n${f.content.trim()}`)
+    );
+
+  const allSamples = [...referenceSamples, ...exampleFileSamples];
+
+  if (allSamples.length > 0) {
+    userMessage += `Reference writing samples (match this voice and style):\n\n${allSamples.join("\n\n---\n\n")}\n\n---\n\n`;
   }
 
   userMessage += `Here is the full document for context:\n\n---\n${fullDocument}\n---\n\n`;
@@ -84,70 +117,21 @@ function buildUserMessage(
   return userMessage;
 }
 
-async function tryAnthropic(
+async function callAnthropic(
+  apiKey: string,
   systemPrompt: string,
   userMessage: string
 ): Promise<string> {
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
-
+  const client = new Anthropic({ apiKey });
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
   });
-
   const content = message.content[0];
   if (content.type !== "text") {
     throw new Error("Unexpected response type from Anthropic");
-  }
-  return content.text;
-}
-
-async function tryOpenAI(
-  systemPrompt: string,
-  userMessage: string
-): Promise<string> {
-  const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-
-  const completion = await client.chat.completions.create({
-    model: "gpt-4o",
-    max_tokens: 1024,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-  });
-
-  const text = completion.choices[0]?.message?.content;
-  if (!text) {
-    throw new Error("Unexpected response from OpenAI");
-  }
-  return text;
-}
-
-async function tryBackupAnthropic(
-  systemPrompt: string,
-  userMessage: string
-): Promise<string> {
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_BACKUP_API_KEY,
-  });
-
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
-  });
-
-  const content = message.content[0];
-  if (content.type !== "text") {
-    throw new Error("Unexpected response type from Anthropic backup");
   }
   return content.text;
 }
@@ -176,22 +160,17 @@ export async function POST(request: NextRequest) {
       instructions
     );
 
-    // Try providers in order: Anthropic → Backup Anthropic → OpenAI
+    // Try providers in order: Anthropic → Backup Anthropic
     const providers: { name: string; fn: () => Promise<string>; available: boolean }[] = [
       {
         name: "Anthropic",
-        fn: () => tryAnthropic(systemPrompt, userMessage),
+        fn: () => callAnthropic(process.env.ANTHROPIC_API_KEY!, systemPrompt, userMessage),
         available: !!process.env.ANTHROPIC_API_KEY,
       },
       {
         name: "Anthropic (backup)",
-        fn: () => tryBackupAnthropic(systemPrompt, userMessage),
+        fn: () => callAnthropic(process.env.ANTHROPIC_BACKUP_API_KEY!, systemPrompt, userMessage),
         available: !!process.env.ANTHROPIC_BACKUP_API_KEY,
-      },
-      {
-        name: "OpenAI",
-        fn: () => tryOpenAI(systemPrompt, userMessage),
-        available: !!process.env.OPENAI_API_KEY,
       },
     ];
 
@@ -199,7 +178,7 @@ export async function POST(request: NextRequest) {
 
     if (availableProviders.length === 0) {
       return NextResponse.json(
-        { error: "No API keys configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY." },
+        { error: "No API keys configured. Set ANTHROPIC_API_KEY." },
         { status: 500 }
       );
     }

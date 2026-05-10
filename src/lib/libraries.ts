@@ -1,3 +1,17 @@
+export interface SuggestionFeedback {
+  id: string;
+  aiSuggested: string;
+  userEdited: string;
+  timestamp: number;
+}
+
+export interface ExampleFile {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: number;
+}
+
 export interface Library {
   id: string;
   name: string;
@@ -6,6 +20,9 @@ export interface Library {
   referenceSamples: string;
   vocabulary: string;
   structureNotes: string;
+  exampleFiles: ExampleFile[];
+  generatedOverview: string;
+  feedback: SuggestionFeedback[];
   createdAt: number;
   updatedAt: number;
 }
@@ -24,6 +41,9 @@ const STARTER_LIBRARIES: Omit<Library, "id" | "createdAt" | "updatedAt">[] = [
     referenceSamples: "",
     vocabulary: "",
     structureNotes: "",
+    exampleFiles: [],
+    generatedOverview: "",
+    feedback: [],
   },
   {
     name: "Blog Posts",
@@ -32,6 +52,9 @@ const STARTER_LIBRARIES: Omit<Library, "id" | "createdAt" | "updatedAt">[] = [
     referenceSamples: "",
     vocabulary: "",
     structureNotes: "",
+    exampleFiles: [],
+    generatedOverview: "",
+    feedback: [],
   },
   {
     name: "Newsletter",
@@ -40,6 +63,9 @@ const STARTER_LIBRARIES: Omit<Library, "id" | "createdAt" | "updatedAt">[] = [
     referenceSamples: "",
     vocabulary: "",
     structureNotes: "",
+    exampleFiles: [],
+    generatedOverview: "",
+    feedback: [],
   },
   {
     name: "Technical Writing",
@@ -48,6 +74,9 @@ const STARTER_LIBRARIES: Omit<Library, "id" | "createdAt" | "updatedAt">[] = [
     referenceSamples: "",
     vocabulary: "",
     structureNotes: "",
+    exampleFiles: [],
+    generatedOverview: "",
+    feedback: [],
   },
   {
     name: "Personal/Casual",
@@ -56,6 +85,9 @@ const STARTER_LIBRARIES: Omit<Library, "id" | "createdAt" | "updatedAt">[] = [
     referenceSamples: "",
     vocabulary: "",
     structureNotes: "",
+    exampleFiles: [],
+    generatedOverview: "",
+    feedback: [],
   },
 ];
 
@@ -78,7 +110,14 @@ export function loadLibraries(): Library[] {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
       return seeded;
     }
-    return JSON.parse(raw) as Library[];
+    const parsed = JSON.parse(raw) as Library[];
+    // Migrate older libraries missing new fields
+    return parsed.map((lib) => ({
+      ...lib,
+      exampleFiles: lib.exampleFiles ?? [],
+      generatedOverview: lib.generatedOverview ?? "",
+      feedback: lib.feedback ?? [],
+    }));
   } catch {
     return [];
   }
@@ -98,8 +137,20 @@ export function createLibrary(name: string): Library {
     referenceSamples: "",
     vocabulary: "",
     structureNotes: "",
+    exampleFiles: [],
+    generatedOverview: "",
+    feedback: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
+  };
+}
+
+export function createExampleFile(name: string): ExampleFile {
+  return {
+    id: generateId(),
+    name,
+    content: "",
+    createdAt: Date.now(),
   };
 }
 
