@@ -5,12 +5,21 @@ export interface Note {
   savedAt: number;
 }
 
+export interface Flag {
+  id: string;
+  text: string;
+  section: string;
+  flaggedAt: number;
+  resolved: boolean;
+}
+
 export interface Document {
   id: string;
   title: string;
   content: string;
   libraryIds: string[];
   notes: Note[];
+  flags: Flag[];
   createdAt: number;
   updatedAt: number;
 }
@@ -28,6 +37,7 @@ export function createDocument(): Document {
     content: "",
     libraryIds: [],
     notes: [],
+    flags: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -41,6 +51,7 @@ export function loadDocuments(): Document[] {
     const docs = (JSON.parse(raw) as Document[]).map((d) => ({
       ...d,
       notes: d.notes ?? [],
+      flags: d.flags ?? [],
     }));
     return docs.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch {

@@ -5,7 +5,7 @@ import { Editor, ChatSelection } from "@/components/Editor";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { LibrarySelector } from "@/components/LibrarySelector";
-import { Document, Note, loadDocuments, saveDocuments, createDocument, generateId } from "@/lib/documents";
+import { Document, Note, Flag, loadDocuments, saveDocuments, createDocument, generateId } from "@/lib/documents";
 import { Library, SuggestionFeedback, loadLibraries, saveLibraries as saveLibsToStorage, getLibrariesById } from "@/lib/libraries";
 
 function saveDocToFile(doc: Document) {
@@ -46,9 +46,10 @@ export default function Home() {
   const [chatSelection, setChatSelection] = useState<ChatSelection | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [pendingSuggestion, setPendingSuggestion] = useState<string | null>(null);
-  const [rightTab, setRightTab] = useState<"improve" | "notes" | "content">("improve");
+  const [rightTab, setRightTab] = useState<"improve" | "notes" | "flags" | "content">("improve");
   const [focusMode, setFocusMode] = useState(false);
   const [tocOpen, setTocOpen] = useState(true);
+  const [cmdKPending, setCmdKPending] = useState<{ from: number; to: number; text: string; sectionText: string } | null>(null);
 
   useEffect(() => {
     // Load from localStorage first (fast)
@@ -193,14 +194,40 @@ export default function Home() {
     setChatSelection(selection);
     setChatOpen(true);
     setPendingSuggestion(null);
+    setCmdKPending(null);
     setRightTab("improve");
   }, []);
+
+  const handleCmdKMenu = useCallback((pending: { from: number; to: number; text: string; sectionText: string } | null) => {
+    setCmdKPending(pending);
+    setRightTab("improve");
+  }, []);
+
+  const handleCmdKSelect = useCallback((mode: "improve" | "transition" | "chat") => {
+    if (!cmdKPending) return;
+    const { from, to, text, sectionText } = cmdKPending;
+    setCmdKPending(null);
+    handleOpenChat({ text, sectionText, from, to, mode });
+  }, [cmdKPending, handleOpenChat]);
 
   const handleCloseChat = useCallback(() => {
     setChatOpen(false);
     setChatSelection(null);
     setPendingSuggestion(null);
   }, []);
+
+  // Keyboard shortcuts for Cmd+K menu: 1/2/3 to select, Esc to close
+  useEffect(() => {
+    if (!cmdKPending) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "1") { e.preventDefault(); handleCmdKSelect("improve"); }
+      else if (e.key === "2") { e.preventDefault(); handleCmdKSelect("transition"); }
+      else if (e.key === "3") { e.preventDefault(); handleCmdKSelect("chat"); }
+      else if (e.key === "Escape") { e.preventDefault(); setCmdKPending(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cmdKPending, handleCmdKSelect]);
 
   const handleMakeSuggestion = useCallback((suggestedText: string) => {
     setPendingSuggestion(suggestedText);
@@ -245,6 +272,38 @@ export default function Home() {
           });
         });
       }
+    },
+    [activeDoc, handleUpdateDocument]
+  );
+
+  const handleSaveFlag = useCallback(
+    (text: string, sectionName: string) => {
+      const flag: Flag = { id: generateId(), text, section: sectionName, flaggedAt: Date.now(), resolved: false };
+      handleUpdateDocument({
+        flags: [...(activeDoc?.flags || []), flag],
+      });
+      setRightTab("flags");
+      setChatOpen(true);
+    },
+    [activeDoc, handleUpdateDocument]
+  );
+
+  const handleToggleFlag = useCallback(
+    (flagId: string) => {
+      handleUpdateDocument({
+        flags: (activeDoc?.flags || []).map((f) =>
+          f.id === flagId ? { ...f, resolved: !f.resolved } : f
+        ),
+      });
+    },
+    [activeDoc, handleUpdateDocument]
+  );
+
+  const handleDeleteFlag = useCallback(
+    (flagId: string) => {
+      handleUpdateDocument({
+        flags: (activeDoc?.flags || []).filter((f) => f.id !== flagId),
+      });
     },
     [activeDoc, handleUpdateDocument]
   );
@@ -324,7 +383,9 @@ export default function Home() {
             focusMode={focusMode}
             tocOpen={tocOpen}
             onOpenChat={handleOpenChat}
+            onCmdKMenu={handleCmdKMenu}
             onSaveNote={handleSaveNote}
+            onSaveFlag={handleSaveFlag}
             onSuggestionFeedback={handleSuggestionFeedback}
             chatSelection={chatSelection}
             pendingSuggestion={pendingSuggestion}
@@ -338,7 +399,7 @@ export default function Home() {
         <aside className="w-80 flex-shrink-0 bg-sidebar flex flex-col min-h-0 border-l border-border/50">
           {/* Tabs */}
           <div className="flex border-b border-border/50">
-            {(["improve", "notes", "content"] as const).map((tab) => (
+            {(["improve", "notes", "flags", "content"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setRightTab(tab)}
@@ -371,6 +432,37 @@ export default function Home() {
                   className="mt-2 w-full bg-transparent border-b border-border/30 focus:border-accent/50 outline-none text-xs text-muted-foreground placeholder:text-muted-foreground/40 pb-1 transition-colors"
                 />
               </div>
+
+              {/* Cmd+K action menu */}
+              {cmdKPending && (
+                <div className="px-3 py-4 border-b border-border/30">
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2.5">
+                    What would you like to do?
+                  </p>
+                  <div className="space-y-1">
+                    {[
+                      { key: "1", mode: "improve" as const, label: "Suggest improvements" },
+                      { key: "2", mode: "transition" as const, label: "Write transition" },
+                      { key: "3", mode: "chat" as const, label: "Chat about it" },
+                    ].map(({ key, mode, label }) => (
+                      <button
+                        key={mode}
+                        onClick={() => handleCmdKSelect(mode)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-foreground/90 hover:bg-sidebar-hover transition-colors text-left group"
+                      >
+                        <kbd className="w-5 h-5 rounded bg-sidebar-hover border border-border/50 text-[10px] font-mono flex items-center justify-center text-muted-foreground group-hover:border-accent/40 group-hover:text-foreground transition-colors">
+                          {key}
+                        </kbd>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/50 mt-2">
+                    Press <kbd className="font-mono">1</kbd>–<kbd className="font-mono">3</kbd> to select, <kbd className="font-mono">esc</kbd> to cancel
+                  </p>
+                </div>
+              )}
+
               <ChatPanel
                 selectedText={chatSelection?.text ?? ""}
                 fullDocument={activeDoc.content}
@@ -434,6 +526,73 @@ export default function Home() {
                               title="Delete note"
                             >
                               Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Flags tab */}
+          {rightTab === "flags" && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="flex-1 overflow-y-auto">
+                {(activeDoc.flags || []).length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center px-6 py-12">
+                    <p className="text-xs text-muted-foreground text-center leading-relaxed">
+                      Select text and press{" "}
+                      <kbd className="px-1.5 py-0.5 rounded bg-sidebar-hover border border-border/50 text-[10px] font-mono">⇧⌘D</kbd>{" "}
+                      to flag it for later
+                    </p>
+                  </div>
+                ) : (
+                  <div className="px-3 py-2 space-y-1.5">
+                    {(activeDoc.flags || []).map((flag) => (
+                      <div
+                        key={flag.id}
+                        className={`group flex gap-2.5 rounded-lg px-3 py-2.5 transition-colors ${
+                          flag.resolved ? "opacity-50" : "bg-muted/30 border border-border/50"
+                        }`}
+                      >
+                        <button
+                          onClick={() => handleToggleFlag(flag.id)}
+                          className={`w-4 h-4 rounded border flex-shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                            flag.resolved ? "bg-accent border-accent" : "border-border hover:border-accent/50"
+                          }`}
+                        >
+                          {flag.resolved && (
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          )}
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          {flag.section && (
+                            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                              {flag.section}
+                            </p>
+                          )}
+                          <p className={`text-sm leading-relaxed line-clamp-3 ${flag.resolved ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                            {flag.text}
+                          </p>
+                          <div className="flex items-center justify-between mt-1.5">
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(flag.flaggedAt).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            <button
+                              onClick={() => handleDeleteFlag(flag.id)}
+                              className="px-1.5 py-0.5 text-[10px] rounded hover:bg-sidebar-hover text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                              Remove
                             </button>
                           </div>
                         </div>

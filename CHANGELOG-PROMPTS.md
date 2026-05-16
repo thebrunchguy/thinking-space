@@ -46,3 +46,7 @@ A running log of feature decisions and suggestions made during development.
   - *"I want a toggle in the 'improve' mode to choose what context is considered when making edits - entire doc, section, or just the highlighted text"*
 - **2026-05-10 15:30** — New: Editable AI suggestions before accepting, with feedback learning — edits are saved to libraries and included in future prompts
   - *"I want to be able to make edits to the specific suggestion itself before I press confirm. And I want the library to take note on how I gave feedback or made suggestions to the changes in a way that will make it give better suggestions over time."*
+- **2026-05-16 00:00** — New: Cmd+K action menu with 3 options (suggest improvements, transition, chat about it) instead of auto-detecting mode
+  - *"when I press command k I want to be able to have 3 options to select from instead of having it automatically start - suggest improvements, transition, and chat about it. Chat about it starts a chat where selected text is shown but before an API call, I can add more context on what I want to ask."*
+- **2026-05-16 15:55** — New: Flags tab (⇧⌘M) to flag text passages for revisiting as a todo-style checklist
+  - *"I want a feature to flag an area to come back to almost like a todo list to revisit - maybe add that next to the notes tab and before content tab? So I can select, press command shift M"*

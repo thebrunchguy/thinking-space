@@ -13,7 +13,7 @@ import { Library } from "@/lib/libraries";
 import { SuggestionDelete, SuggestionAdd } from "@/extensions/suggestion";
 import { SuggestionControls } from "./SuggestionControls";
 
-type ChatMode = "improve" | "transition" | "quick";
+type ChatMode = "improve" | "transition" | "quick" | "chat";
 
 interface ChatSelection {
   text: string;
@@ -39,7 +39,9 @@ interface EditorProps {
   focusMode?: boolean;
   tocOpen?: boolean;
   onOpenChat?: (selection: ChatSelection) => void;
+  onCmdKMenu?: (pending: { from: number; to: number; text: string; sectionText: string } | null) => void;
   onSaveNote?: (text: string, sectionName: string) => void;
+  onSaveFlag?: (text: string, sectionName: string) => void;
   onSuggestionFeedback?: (aiSuggested: string, userEdited: string) => void;
   chatSelection?: ChatSelection | null;
   pendingSuggestion?: string | null;
@@ -53,7 +55,7 @@ function nextSuggestionId() {
 
 export type { ChatSelection, ChatMode };
 
-export function Editor({ document, onUpdate, libraries = [], instructions = "", focusMode = false, tocOpen = true, onOpenChat, onSaveNote, onSuggestionFeedback, chatSelection, pendingSuggestion, onSuggestionApplied }: EditorProps) {
+export function Editor({ document, onUpdate, libraries = [], instructions = "", focusMode = false, tocOpen = true, onOpenChat, onCmdKMenu, onSaveNote, onSaveFlag, onSuggestionFeedback, chatSelection, pendingSuggestion, onSuggestionApplied }: EditorProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const isInternalUpdate = useRef(false);
@@ -63,6 +65,7 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
   const [sections, setSections] = useState<Section[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isScrollSnapping = useRef(false);
+  const prevSectionIndex = useRef(0);
 
   const editor = useEditor(
     {
@@ -96,6 +99,7 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
           clearTimeout(saveTimeoutRef.current);
         }
         saveTimeoutRef.current = setTimeout(() => {
+          isInternalUpdate.current = true;
           onUpdate({ content: editor.getHTML() });
         }, 300);
       },
@@ -253,18 +257,29 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
         const selectedText = editor.state.doc.textBetween(from, to, "\n");
         if (!selectedText.trim()) return;
 
-        // Detect transition: selection spans multiple paragraphs with a break/divider
-        let blockCount = 0;
-        editor.state.doc.nodesBetween(from, to, (node) => {
-          if (node.isBlock && node.isTextblock) blockCount++;
-        });
-        const hasBreak = /\n\s*[—–-]{1,3}\s*\n/.test(selectedText) || blockCount >= 3;
-        const mode: ChatMode = hasBreak ? "transition" : "improve";
         const sectionCtx = getSectionText(from);
+        onCmdKMenu?.({ from, to, text: selectedText, sectionText: sectionCtx });
+      }
+      // Cmd+Shift+D: flag selected text for revisiting (keep text in place)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyD") {
+        e.preventDefault();
+        if (!editor) return;
+        const { from, to } = editor.state.selection;
+        if (from === to) return;
+        const selectedText = editor.state.doc.textBetween(from, to, "\n");
+        if (!selectedText.trim()) return;
 
-        onOpenChat?.({ text: selectedText, sectionText: sectionCtx, from, to, mode });
+        let sectionName = "";
+        editor.state.doc.nodesBetween(0, from, (node) => {
+          if (node.type.name === "heading" && node.attrs.level <= 3) {
+            sectionName = node.textContent;
+          }
+        });
+
         editor.commands.setTextSelection(to);
         window.getSelection()?.removeAllRanges();
+        onSaveFlag?.(selectedText, sectionName);
+        return;
       }
       // Cmd+M: cut selected text and save as note
       if ((e.metaKey || e.ctrlKey) && e.key === "m") {
@@ -275,7 +290,6 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
         const selectedText = editor.state.doc.textBetween(from, to, "\n");
         if (!selectedText.trim()) return;
 
-        // Find the nearest heading above the selection
         let sectionName = "";
         editor.state.doc.nodesBetween(0, from, (node) => {
           if (node.type.name === "heading" && node.attrs.level <= 3) {
@@ -287,9 +301,9 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
         onSaveNote?.(selectedText, sectionName);
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [requestSuggestion, editor, onOpenChat, onSaveNote, getSectionText]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [requestSuggestion, editor, onOpenChat, onSaveNote, onSaveFlag, getSectionText]);
 
   // Apply suggestion from chat panel
   const applyChatSuggestion = useCallback(
@@ -456,6 +470,7 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
       if (!editor || !scrollContainerRef.current) return;
       // Suppress snap handler during TOC-initiated scroll
       isScrollSnapping.current = true;
+      prevSectionIndex.current = index;
       setActiveSectionIndex(index);
       const section = sections[index];
       if (!section) return;
@@ -544,49 +559,38 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
     return () => container.removeEventListener("scroll", onScroll);
   }, [focusMode, editor, sections]);
 
-  // Snap scrolling in focus mode
+  // Snap scrolling in focus mode — only snap when the active section changes
   useEffect(() => {
     if (!focusMode || !scrollContainerRef.current) return;
+    // Only snap when the user has scrolled to a different section
+    if (activeSectionIndex === prevSectionIndex.current) return;
+    prevSectionIndex.current = activeSectionIndex;
+
+    if (isScrollSnapping.current) return;
+    isScrollSnapping.current = true;
 
     const container = scrollContainerRef.current;
-    let scrollTimeout: ReturnType<typeof setTimeout>;
-
-    const onScrollEnd = () => {
-      clearTimeout(scrollTimeout);
-      scrollTimeout = setTimeout(() => {
-        if (isScrollSnapping.current) return;
-        isScrollSnapping.current = true;
-
-        // Snap to the nearest section
-        const section = sections[activeSectionIndex];
-        if (section && editor) {
-          if (section.pos === 0) {
-            container.scrollTo({ top: 0, behavior: "smooth" });
-          } else {
-            try {
-              const domPos = editor.view.domAtPos(section.pos + 1);
-              const element = domPos.node instanceof HTMLElement
-                ? domPos.node
-                : domPos.node.parentElement;
-              if (element) {
-                const heading = element.closest("h1, h2, h3") || element;
-                heading.scrollIntoView({ behavior: "smooth", block: "start" });
-              }
-            } catch {
-              // skip
-            }
+    const section = sections[activeSectionIndex];
+    if (section && editor) {
+      if (section.pos === 0) {
+        container.scrollTo({ top: 0, behavior: "smooth" });
+      } else {
+        try {
+          const domPos = editor.view.domAtPos(section.pos + 1);
+          const element = domPos.node instanceof HTMLElement
+            ? domPos.node
+            : domPos.node.parentElement;
+          if (element) {
+            const heading = element.closest("h1, h2, h3") || element;
+            heading.scrollIntoView({ behavior: "smooth", block: "start" });
           }
+        } catch {
+          // skip
         }
+      }
+    }
 
-        setTimeout(() => { isScrollSnapping.current = false; }, 500);
-      }, 150);
-    };
-
-    container.addEventListener("scroll", onScrollEnd, { passive: true });
-    return () => {
-      container.removeEventListener("scroll", onScrollEnd);
-      clearTimeout(scrollTimeout);
-    };
+    setTimeout(() => { isScrollSnapping.current = false; }, 500);
   }, [focusMode, activeSectionIndex, sections, editor]);
 
   // Track which child indices are in the active section
@@ -831,6 +835,7 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
 
           {/* Editor Content */}
           <EditorContent editor={editor} />
+
         </div>
 
       </div>

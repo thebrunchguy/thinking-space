@@ -4,8 +4,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Library } from "@/lib/libraries";
 
 type Category = "general" | "cleanup" | "structural";
-type ChatMode = "improve" | "transition" | "quick";
-type Phase = "empty" | "diagnosing" | "selecting" | "rewriting" | "done";
+type ChatMode = "improve" | "transition" | "quick" | "chat";
+type Phase = "empty" | "diagnosing" | "selecting" | "rewriting" | "done" | "chatting" | "chat-responding";
 
 // --- Improve mode types ---
 interface Improvement {
@@ -58,8 +58,11 @@ export function ChatPanel({
   const [additionalContext, setAdditionalContext] = useState("");
   const [rewrite, setRewrite] = useState("");
   const [error, setError] = useState("");
-  const [contextScope, setContextScope] = useState<ContextScope>("document");
+  const [contextScope, setContextScope] = useState<ContextScope>("section");
+  const [chatMessage, setChatMessage] = useState("");
+  const [chatResponse, setChatResponse] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const diagnosedRef = useRef<string>("");
 
   const contextText = contextScope === "document"
@@ -96,11 +99,65 @@ export function ChatPanel({
     }
   }, [mode, quickRewrite]);
 
+  // Handle chat mode — show input immediately, no auto API call
+  useEffect(() => {
+    if (mode !== "chat") return;
+    diagnosedRef.current = "";
+    setImprovements([]);
+    setApproaches([]);
+    setAdditionalContext("");
+    setRewrite("");
+    setChatResponse("");
+    setChatMessage("");
+    setError("");
+    setPhase("chatting");
+    // Focus the chat input after render
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  }, [mode, selectedText]);
+
+  // Auto-resize chat textarea
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    }
+  }, [chatMessage]);
+
+  const sendChatMessage = useCallback(async () => {
+    if (!chatMessage.trim()) return;
+    setPhase("chat-responding");
+    setError("");
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "chat",
+          selectedText,
+          fullDocument: contextText,
+          libraries: libPayload,
+          message: chatMessage.trim(),
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed");
+      const { response } = await res.json();
+      setChatResponse(response);
+      setPhase("done");
+    } catch {
+      setError("Couldn't get a response. Try again.");
+      setPhase("chatting");
+    }
+  }, [chatMessage, selectedText, contextText, libPayload]);
+
   // Auto-diagnose when selection changes (improve/transition modes only)
   useEffect(() => {
-    if (mode === "quick") return;
-    if (!selectedText || selectedText === diagnosedRef.current) return;
-    diagnosedRef.current = selectedText;
+    if (mode === "quick" || mode === "chat") return;
+    const cacheKey = `${selectedText}::${contextScope}`;
+    if (!selectedText || cacheKey === diagnosedRef.current) return;
+    diagnosedRef.current = cacheKey;
     setImprovements([]);
     setApproaches([]);
     setAdditionalContext("");
@@ -149,7 +206,7 @@ export function ChatPanel({
         setError("Couldn't analyze the text. Try again.");
         setPhase("selecting");
       });
-  }, [selectedText, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedText, mode, contextScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-resize textarea
   useEffect(() => {
@@ -377,8 +434,42 @@ export function ChatPanel({
               </div>
             )}
 
-            {/* Rewrite result */}
-            {phase === "done" && rewrite && (
+            {/* === CHAT MODE: user message + response === */}
+            {mode === "chat" && (phase === "chatting" || phase === "chat-responding" || phase === "done") && (
+              <div className="px-3 py-3 space-y-3">
+                {/* Chat input */}
+                <div>
+                  <textarea
+                    ref={chatInputRef}
+                    value={chatMessage}
+                    onChange={(e) => setChatMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendChatMessage();
+                      }
+                    }}
+                    placeholder="What would you like to know? e.g., &quot;Give me 3 alternative approaches...&quot;"
+                    rows={3}
+                    disabled={phase !== "chatting"}
+                    className="w-full bg-sidebar-hover rounded-lg px-3 py-2.5 text-sm outline-none resize-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-accent/30 disabled:opacity-60"
+                  />
+                </div>
+
+                {/* Chat response */}
+                {phase === "done" && chatResponse && (
+                  <div>
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Response</p>
+                    <div className="bg-sidebar-hover/50 rounded-lg px-3 py-2.5 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                      {chatResponse}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Rewrite result (non-chat modes) */}
+            {phase === "done" && rewrite && mode !== "chat" && (
               <div className="px-3 pb-3">
                 <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
                   {mode === "transition" ? "Suggested transition" : mode === "quick" ? "Suggestion" : "Rewrite"}
@@ -399,12 +490,22 @@ export function ChatPanel({
 
           {/* Bottom controls */}
           <div className="border-t border-border/30 p-3 space-y-2">
-            {phase === "rewriting" && (
+            {(phase === "rewriting" || phase === "chat-responding") && (
               <div className="flex items-center justify-center py-1">
                 <span className="text-xs text-muted-foreground animate-pulse">
-                  {mode === "transition" ? "Writing transition..." : "Rewriting..."}
+                  {phase === "chat-responding" ? "Thinking..." : mode === "transition" ? "Writing transition..." : "Rewriting..."}
                 </span>
               </div>
+            )}
+
+            {phase === "chatting" && (
+              <button
+                onClick={sendChatMessage}
+                disabled={!chatMessage.trim()}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-accent text-accent-foreground hover:bg-accent/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
             )}
 
             {phase === "selecting" && (
@@ -434,7 +535,7 @@ export function ChatPanel({
               </>
             )}
 
-            {phase === "done" && (
+            {phase === "done" && mode !== "chat" && (
               <div className="space-y-2">
                 <button
                   onClick={handleApplySuggestion}
@@ -460,6 +561,20 @@ export function ChatPanel({
                   Try again
                 </button>
               </div>
+            )}
+
+            {phase === "done" && mode === "chat" && (
+              <button
+                onClick={() => {
+                  setChatMessage("");
+                  setChatResponse("");
+                  setPhase("chatting");
+                  setTimeout(() => chatInputRef.current?.focus(), 50);
+                }}
+                className="w-full flex items-center justify-center px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Ask another question
+              </button>
             )}
           </div>
         </>

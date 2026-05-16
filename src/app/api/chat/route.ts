@@ -223,6 +223,30 @@ CRITICAL RULES:
       return NextResponse.json({ rewrite: text });
     }
 
+    if (mode === "chat") {
+      const { message = "" } = body;
+      if (!message.trim()) {
+        return NextResponse.json({ error: "No message provided" }, { status: 400 });
+      }
+
+      let system = `You are a thoughtful writing advisor. The author has selected a passage from their document and wants to discuss it with you. Answer their question directly and helpfully. Be concise but thorough. Write in plain text — no markdown headers or bullet formatting unless the author's question clearly calls for a list.`;
+
+      const styleRules = (libraries as LibraryContext[]).map((l) => l.styleRules?.trim()).filter(Boolean);
+      if (styleRules.length > 0) {
+        system += `\n\nThe author's style rules (for context):\n${styleRules.join("\n\n")}`;
+      }
+
+      const overviews = (libraries as LibraryContext[]).map((l) => l.generatedOverview?.trim()).filter(Boolean);
+      if (overviews.length > 0) {
+        system += `\n\nStyle overview:\n${overviews.join("\n\n")}`;
+      }
+
+      const user = `Full document for context:\n"""\n${fullDocument}\n"""\n\nSelected passage:\n"""\n${selectedText}\n"""\n\nAuthor's question: ${message}`;
+
+      const text = await callWithFallback(system, user);
+      return NextResponse.json({ response: text });
+    }
+
     return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
   } catch (error) {
     console.error("Chat API error:", error);
