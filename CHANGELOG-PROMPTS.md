@@ -50,3 +50,9 @@ A running log of feature decisions and suggestions made during development.
   - *"when I press command k I want to be able to have 3 options to select from instead of having it automatically start - suggest improvements, transition, and chat about it. Chat about it starts a chat where selected text is shown but before an API call, I can add more context on what I want to ask."*
 - **2026-05-16 15:55** — New: Flags tab (⇧⌘M) to flag text passages for revisiting as a todo-style checklist
   - *"I want a feature to flag an area to come back to almost like a todo list to revisit - maybe add that next to the notes tab and before content tab? So I can select, press command shift M"*
+- **2026-05-19 09:39** — New: Cmd+Shift+K keyboard shortcut to toggle dark/light mode (originally requested as Cmd+Shift+L; rebound after Cmd+Shift+L was intercepted by a global shortcut)
+  - *"control shift L to toggle dark and light mode please" → "actually, command, not control shift l" → "figure out a simple command shift one to use"*
+- **2026-05-19 11:10** — New: "Wording check" button in the Improve tab that scans the whole document and adds the 5 highest-priority minor fixes (grammar, spelling, single-sentence reframes) as inline Accept/Reject suggestions
+  - *"can you make a little button like 'wording check', which makes the 5 highest priority minor suggestions including grammar fixes, spelling fixes, and slight reframings of single sentences? This should be under the 'improve' tab, but unsure where it's most seamless"*
+- **2026-05-19 11:27** — New: Stream wording-check fixes so each suggestion appears in the editor the moment the model emits it, instead of waiting for the whole batch
+  - *"Can you make it do it like sequentially so I don't have to wait so long for all of them to appear?"*

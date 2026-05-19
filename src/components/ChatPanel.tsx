@@ -33,6 +33,7 @@ type ContextScope = "document" | "section" | "selection";
 
 interface ChatPanelProps {
   selectedText: string;
+  currentSelectedText?: string;
   fullDocument: string;
   sectionText: string;
   libraries: Library[];
@@ -44,6 +45,7 @@ interface ChatPanelProps {
 
 export function ChatPanel({
   selectedText,
+  currentSelectedText = "",
   fullDocument,
   sectionText,
   libraries,
@@ -325,15 +327,18 @@ export function ChatPanel({
       {/* Active content */}
       {selectedText && (
         <>
-          {/* Selected text preview */}
-          <div className="px-3 py-2 border-b border-border/30">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
-              Selected text
-            </p>
-            <p className="text-xs text-foreground/80 leading-relaxed line-clamp-3">
-              {selectedText}
-            </p>
-          </div>
+          {/* Selected text preview — reflects the *live* editor selection so it
+              never shows a stale snapshot from an earlier ⌘K. */}
+          {currentSelectedText.trim() && (
+            <div className="px-3 py-2 border-b border-border/30">
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                Selected text
+              </p>
+              <p className="text-xs text-foreground/80 leading-relaxed line-clamp-3">
+                {currentSelectedText}
+              </p>
+            </div>
+          )}
 
           {/* Main content area */}
           <div className="flex-1 overflow-y-auto min-h-0">

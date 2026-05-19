@@ -9,6 +9,13 @@ export function ThemeToggle() {
   useEffect(() => {
     setMounted(true);
     setDark(document.documentElement.classList.contains("dark"));
+
+    // Keep the icon in sync when the theme is toggled elsewhere
+    // (e.g. the Cmd+Shift+K keyboard shortcut).
+    const sync = () =>
+      setDark(document.documentElement.classList.contains("dark"));
+    window.addEventListener("themechange", sync);
+    return () => window.removeEventListener("themechange", sync);
   }, []);
 
   const toggle = () => {
@@ -16,6 +23,7 @@ export function ThemeToggle() {
     setDark(next);
     document.documentElement.classList.toggle("dark", next);
     localStorage.setItem("thinking-space-theme", next ? "dark" : "light");
+    window.dispatchEvent(new Event("themechange"));
   };
 
   if (!mounted) return <div className="w-8 h-8" />;

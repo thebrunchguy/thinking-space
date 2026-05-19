@@ -24,6 +24,20 @@ interface ChatSelection {
   quickRewrite?: string;
 }
 
+interface WordingFix {
+  type: "spelling" | "grammar" | "reframe";
+  original: string;
+  replacement: string;
+  reason: string;
+}
+
+type WordingStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "streaming"; applied: number }
+  | { state: "done"; applied: number; total: number }
+  | { state: "error" };
+
 interface Section {
   id: string;
   title: string;
@@ -43,9 +57,12 @@ interface EditorProps {
   onSaveNote?: (text: string, sectionName: string) => void;
   onSaveFlag?: (text: string, sectionName: string) => void;
   onSuggestionFeedback?: (aiSuggested: string, userEdited: string) => void;
+  onSelectionChange?: (text: string) => void;
   chatSelection?: ChatSelection | null;
   pendingSuggestion?: string | null;
   onSuggestionApplied?: () => void;
+  wordingCheckNonce?: number;
+  onWordingStatus?: (status: WordingStatus) => void;
 }
 
 let suggestionCounter = 0;
@@ -53,9 +70,9 @@ function nextSuggestionId() {
   return `suggestion-${Date.now()}-${++suggestionCounter}`;
 }
 
-export type { ChatSelection, ChatMode };
+export type { ChatSelection, ChatMode, WordingFix, WordingStatus };
 
-export function Editor({ document, onUpdate, libraries = [], instructions = "", focusMode = false, tocOpen = true, onOpenChat, onCmdKMenu, onSaveNote, onSaveFlag, onSuggestionFeedback, chatSelection, pendingSuggestion, onSuggestionApplied }: EditorProps) {
+export function Editor({ document, onUpdate, libraries = [], instructions = "", focusMode = false, tocOpen = true, onOpenChat, onCmdKMenu, onSaveNote, onSaveFlag, onSuggestionFeedback, onSelectionChange, chatSelection, pendingSuggestion, onSuggestionApplied, wordingCheckNonce = 0, onWordingStatus }: EditorProps) {
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const isInternalUpdate = useRef(false);
@@ -410,6 +427,166 @@ export function Editor({ document, onUpdate, libraries = [], instructions = "", 
       onSuggestionApplied?.();
     }
   }, [pendingSuggestion, chatSelection, editor, applyChatSuggestion, onSuggestionApplied]);
+
+  // Report the live editor selection so the Improve panel never shows a stale
+  // snapshot. ProseMirror keeps its selection after the editor blurs (e.g. when
+  // focus moves to the side panel), so this stays accurate through ⌘K.
+  useEffect(() => {
+    if (!editor || !onSelectionChange) return;
+    const report = () => {
+      const { from, to } = editor.state.selection;
+      onSelectionChange(
+        from === to ? "" : editor.state.doc.textBetween(from, to, "\n")
+      );
+    };
+    report();
+    editor.on("selectionUpdate", report);
+    editor.on("transaction", report);
+    return () => {
+      editor.off("selectionUpdate", report);
+      editor.off("transaction", report);
+    };
+  }, [editor, onSelectionChange]);
+
+  // Apply a batch of minor wording fixes as inline suggestions. Each fix is
+  // located by an exact text match within a single text node (skipping text
+  // already inside a suggestion), then marked delete + insert add — so it flows
+  // into the existing Accept/Reject SuggestionControls. Returns how many landed.
+  const applyWordingFixes = useCallback(
+    (fixes: WordingFix[]): number => {
+      if (!editor) return 0;
+      const deleteMarkType = editor.schema.marks.suggestionDelete;
+      const addMarkType = editor.schema.marks.suggestionAdd;
+      if (!deleteMarkType || !addMarkType) return 0;
+
+      let applied = 0;
+      for (const fix of fixes) {
+        const original = (fix.original || "").trim();
+        const replacement = fix.replacement ?? "";
+        if (!original || original === replacement) continue;
+
+        let matchFrom = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (matchFrom !== -1) return false;
+          if (!node.isText || !node.text) return;
+          const hasSuggestionMark = node.marks.some(
+            (m) => m.type === deleteMarkType || m.type === addMarkType
+          );
+          if (hasSuggestionMark) return;
+          const idx = node.text.indexOf(original);
+          if (idx !== -1) matchFrom = pos + idx;
+        });
+        if (matchFrom === -1) continue;
+
+        const matchTo = matchFrom + original.length;
+        const suggestionId = nextSuggestionId();
+        editor
+          .chain()
+          .command(({ tr }) => {
+            tr.addMark(matchFrom, matchTo, deleteMarkType.create({ suggestionId }));
+            return true;
+          })
+          .command(({ tr }) => {
+            tr.insert(
+              matchTo,
+              editor.schema.text(replacement, [addMarkType.create({ suggestionId })])
+            );
+            return true;
+          })
+          .run();
+        applied += 1;
+      }
+      return applied;
+    },
+    [editor]
+  );
+
+  // Run "Wording check" when the Improve tab bumps the nonce.
+  const lastWordingNonce = useRef(0);
+  useEffect(() => {
+    if (!editor || wordingCheckNonce <= 0) return;
+    if (wordingCheckNonce === lastWordingNonce.current) return;
+    lastWordingNonce.current = wordingCheckNonce;
+
+    let cancelled = false;
+    const ac = new AbortController();
+    onWordingStatus?.({ state: "checking" });
+
+    (async () => {
+      let applied = 0;
+      let total = 0;
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: ac.signal,
+          body: JSON.stringify({
+            mode: "wording-check",
+            fullDocument: editor.getText({ blockSeparator: "\n\n" }),
+            libraries: libraries.map((l) => ({
+              name: l.name,
+              styleRules: l.styleRules,
+              referenceSamples: l.referenceSamples,
+              vocabulary: l.vocabulary,
+              structureNotes: l.structureNotes,
+              generatedOverview: l.generatedOverview,
+              exampleFiles: l.exampleFiles?.map((f) => ({ name: f.name, content: f.content })) || [],
+              feedback: l.feedback?.map((f) => ({ aiSuggested: f.aiSuggested, userEdited: f.userEdited })) || [],
+            })),
+          }),
+        });
+        if (!res.ok || !res.body) throw new Error("Failed");
+
+        // Each NDJSON line is one fix — apply it the moment it arrives so
+        // suggestions pop in one by one instead of all at the end.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        const handleLine = (line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          let fix: WordingFix;
+          try {
+            fix = JSON.parse(trimmed);
+          } catch {
+            return;
+          }
+          total += 1;
+          applied += applyWordingFixes([fix]);
+          if (!cancelled) onWordingStatus?.({ state: "streaming", applied });
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (cancelled) {
+            reader.cancel();
+            return;
+          }
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            handleLine(buf.slice(0, nl));
+            buf = buf.slice(nl + 1);
+          }
+        }
+        handleLine(buf); // trailing line without a newline, if any
+
+        if (!cancelled) onWordingStatus?.({ state: "done", applied, total });
+      } catch (err) {
+        if (cancelled || (err as Error).name === "AbortError") return;
+        // If some fixes already landed, treat it as a partial success.
+        if (applied > 0) onWordingStatus?.({ state: "done", applied, total });
+        else onWordingStatus?.({ state: "error" });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [editor, wordingCheckNonce, libraries, applyWordingFixes, onWordingStatus]);
 
   // Track whether suggestions exist to show/hide sidebar
   useEffect(() => {

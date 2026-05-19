@@ -107,6 +107,37 @@ Do NOT:
   return { system, user };
 }
 
+function buildWordingCheckPrompt(
+  fullDocument: string,
+  libraries: LibraryContext[]
+): { system: string; user: string } {
+  let system = `You are a meticulous copy editor. Scan the author's document and return ONLY the highest-priority MINOR fixes — at most 5. Allowed fix types:
+
+- "spelling": typos and misspellings
+- "grammar": grammatical errors, punctuation, agreement, verb tense
+- "reframe": a slight rewording of a SINGLE awkward sentence for clarity (keep the meaning and the author's voice; do not expand or restructure)
+
+Strict rules:
+- Do NOT suggest structural changes, reorganization, tone shifts, or multi-sentence rewrites.
+- Prioritize clear errors over stylistic preference. Fewer than 5 is fine — only include genuinely worthwhile fixes. If there are none, return [].
+- "original" MUST be copied verbatim from the document, character-for-character (same punctuation, capitalization, spacing). It must be a contiguous span within a single sentence — no ellipses, no truncation, no spanning paragraphs.
+- Keep "original" as short as possible while still being unambiguous to locate.
+
+Return ONLY a JSON array, ordered highest priority first. Each item:
+{"type": "spelling"|"grammar"|"reframe", "original": "<verbatim text from document>", "replacement": "<corrected text>", "reason": "<at most one short sentence>"}
+
+Nothing else — just the JSON array.`;
+
+  const overviews = libraries.map((l) => l.generatedOverview?.trim()).filter(Boolean);
+  if (overviews.length > 0) {
+    system += `\n\nStyle overview (keep "reframe" fixes consistent with this voice):\n${overviews.join("\n\n")}`;
+  }
+
+  const user = `Document:\n"""\n${fullDocument}\n"""`;
+
+  return { system, user };
+}
+
 async function callAnthropic(
   apiKey: string,
   system: string,
@@ -153,10 +184,185 @@ async function callWithFallback(system: string, userMessage: string): Promise<st
   throw lastError || new Error("All providers failed");
 }
 
+async function* streamAnthropicDeltas(
+  apiKey: string,
+  system: string,
+  userMessage: string,
+  signal: AbortSignal
+): AsyncGenerator<string> {
+  const client = new Anthropic({ apiKey });
+  const stream = await client.messages.create(
+    {
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1024,
+      system,
+      messages: [{ role: "user", content: userMessage }],
+      stream: true,
+    },
+    { signal }
+  );
+  for await (const event of stream) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      yield event.delta.text;
+    }
+  }
+}
+
+// Yields text deltas, failing over to the backup key only if the first
+// provider errors *before* producing any output (can't restart mid-stream).
+async function* streamWithFallback(
+  system: string,
+  userMessage: string,
+  signal: AbortSignal
+): AsyncGenerator<string> {
+  const providers = [
+    { name: "Anthropic", key: process.env.ANTHROPIC_API_KEY },
+    { name: "Anthropic (backup)", key: process.env.ANTHROPIC_BACKUP_API_KEY },
+  ].filter((p) => !!p.key) as { name: string; key: string }[];
+
+  if (providers.length === 0) {
+    throw new Error("No API keys configured. Set ANTHROPIC_API_KEY.");
+  }
+
+  let lastError: Error | null = null;
+  for (let i = 0; i < providers.length; i++) {
+    const p = providers[i];
+    let started = false;
+    try {
+      for await (const chunk of streamAnthropicDeltas(p.key, system, userMessage, signal)) {
+        started = true;
+        yield chunk;
+      }
+      return;
+    } catch (error) {
+      console.error(`${p.name} stream failed:`, (error as Error).message);
+      lastError = error as Error;
+      if (started) throw error; // already streamed — can't safely fail over
+    }
+  }
+  throw lastError || new Error("All providers failed");
+}
+
+// Incremental scanner: feed it accumulating LLM text, pull out each complete
+// top-level JSON object from inside the `[ {...}, {...} ]` array as it closes.
+function createObjectScanner() {
+  let buf = "";
+  let i = 0;
+  let inArray = false;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let objStart = -1;
+
+  return {
+    push(text: string): unknown[] {
+      buf += text;
+      const out: unknown[] = [];
+      while (i < buf.length) {
+        const ch = buf[i];
+        if (!inArray) {
+          if (ch === "[") inArray = true;
+          i++;
+          continue;
+        }
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === "\\") esc = true;
+          else if (ch === '"') inStr = false;
+          i++;
+          continue;
+        }
+        if (ch === '"') {
+          inStr = true;
+          i++;
+          continue;
+        }
+        if (ch === "{") {
+          if (depth === 0) objStart = i;
+          depth++;
+          i++;
+          continue;
+        }
+        if (ch === "}") {
+          depth--;
+          i++;
+          if (depth === 0 && objStart !== -1) {
+            const slice = buf.slice(objStart, i);
+            objStart = -1;
+            try {
+              out.push(JSON.parse(slice));
+            } catch {
+              /* incomplete/malformed — skip */
+            }
+          }
+          continue;
+        }
+        if (ch === "]" && depth === 0) {
+          i = buf.length; // array closed — stop scanning
+          break;
+        }
+        i++;
+      }
+      return out;
+    },
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { mode, chatMode, selectedText, fullDocument, libraries = [] } = body;
+
+    if (mode === "wording-check") {
+      if (!fullDocument || !fullDocument.trim()) {
+        return new Response("", {
+          headers: { "Content-Type": "application/x-ndjson" },
+        });
+      }
+      const { system, user } = buildWordingCheckPrompt(fullDocument, libraries);
+      const ac = new AbortController();
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const scanner = createObjectScanner();
+          let emitted = 0;
+          try {
+            for await (const delta of streamWithFallback(system, user, ac.signal)) {
+              for (const fix of scanner.push(delta)) {
+                controller.enqueue(encoder.encode(JSON.stringify(fix) + "\n"));
+                if (++emitted >= 5) {
+                  ac.abort(); // got our 5 — stop generating
+                  controller.close();
+                  return;
+                }
+              }
+            }
+            controller.close();
+          } catch (error) {
+            if ((error as Error).name === "AbortError") {
+              controller.close();
+            } else {
+              console.error("Wording-check stream error:", (error as Error).message);
+              controller.error(error);
+            }
+          }
+        },
+        cancel() {
+          ac.abort(); // client disconnected — stop the LLM
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "application/x-ndjson",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
 
     if (!selectedText) {
       return NextResponse.json({ error: "No text selected" }, { status: 400 });

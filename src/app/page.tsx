@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Editor, ChatSelection } from "@/components/Editor";
+import { Editor, ChatSelection, WordingStatus } from "@/components/Editor";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatPanel } from "@/components/ChatPanel";
 import { LibrarySelector } from "@/components/LibrarySelector";
@@ -50,6 +50,9 @@ export default function Home() {
   const [focusMode, setFocusMode] = useState(false);
   const [tocOpen, setTocOpen] = useState(true);
   const [cmdKPending, setCmdKPending] = useState<{ from: number; to: number; text: string; sectionText: string } | null>(null);
+  const [liveSelectedText, setLiveSelectedText] = useState("");
+  const [wordingNonce, setWordingNonce] = useState(0);
+  const [wordingStatus, setWordingStatus] = useState<WordingStatus>({ state: "idle" });
 
   useEffect(() => {
     // Load from localStorage first (fast)
@@ -104,7 +107,8 @@ export default function Home() {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  // Cmd+H toggle left sidebar, Cmd+L toggle right panel
+  // Cmd+H toggle left sidebar, Cmd+O toggle right panel,
+  // Cmd+G focus mode, Cmd+Shift+K toggle dark/light theme
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "h") {
@@ -118,6 +122,15 @@ export default function Home() {
       if ((e.metaKey || e.ctrlKey) && e.key === "g") {
         e.preventDefault();
         setFocusMode((prev) => !prev);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyK") {
+        e.preventDefault();
+        const isDark = document.documentElement.classList.toggle("dark");
+        localStorage.setItem(
+          "thinking-space-theme",
+          isDark ? "dark" : "light"
+        );
+        window.dispatchEvent(new Event("themechange"));
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -387,9 +400,12 @@ export default function Home() {
             onSaveNote={handleSaveNote}
             onSaveFlag={handleSaveFlag}
             onSuggestionFeedback={handleSuggestionFeedback}
+            onSelectionChange={setLiveSelectedText}
             chatSelection={chatSelection}
             pendingSuggestion={pendingSuggestion}
             onSuggestionApplied={handleSuggestionApplied}
+            wordingCheckNonce={wordingNonce}
+            onWordingStatus={setWordingStatus}
           />
         )}
       </main>
@@ -431,6 +447,42 @@ export default function Home() {
                   placeholder="Quick instruction (e.g., 'make it punchier')..."
                   className="mt-2 w-full bg-transparent border-b border-border/30 focus:border-accent/50 outline-none text-xs text-muted-foreground placeholder:text-muted-foreground/40 pb-1 transition-colors"
                 />
+                <button
+                  onClick={() => {
+                    setWordingStatus({ state: "checking" });
+                    setWordingNonce((n) => n + 1);
+                  }}
+                  disabled={wordingStatus.state === "checking" || wordingStatus.state === "streaming"}
+                  title="Scan the whole document for the top minor fixes (grammar, spelling, slight reframes) and add them as suggestions"
+                  className="mt-2.5 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar-hover/60 text-muted-foreground hover:text-foreground hover:bg-sidebar-hover transition-colors disabled:opacity-50 disabled:cursor-default"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={wordingStatus.state === "checking" || wordingStatus.state === "streaming" ? "animate-pulse" : ""}>
+                    <path d="m6 16 4-10 4 10" />
+                    <path d="M7.5 13h5" />
+                    <path d="m16 18 2 2 4-4" />
+                  </svg>
+                  {wordingStatus.state === "checking"
+                    ? "Checking wording…"
+                    : wordingStatus.state === "streaming"
+                      ? `Adding fixes… (${wordingStatus.applied})`
+                      : "Wording check"}
+                </button>
+                {wordingStatus.state === "done" && (
+                  <p className="mt-1.5 text-[10px] text-muted-foreground/70 text-center">
+                    {wordingStatus.total === 0
+                      ? "No minor fixes found"
+                      : wordingStatus.applied === 0
+                        ? "Found fixes, but none could be located in the text"
+                        : wordingStatus.applied === wordingStatus.total
+                          ? `Added ${wordingStatus.applied} suggestion${wordingStatus.applied === 1 ? "" : "s"} — review them in the editor`
+                          : `Added ${wordingStatus.applied} of ${wordingStatus.total} (the rest couldn't be located)`}
+                  </p>
+                )}
+                {wordingStatus.state === "error" && (
+                  <p className="mt-1.5 text-[10px] text-red-400 text-center">
+                    Couldn&apos;t run wording check. Try again.
+                  </p>
+                )}
               </div>
 
               {/* Cmd+K action menu */}
@@ -465,6 +517,7 @@ export default function Home() {
 
               <ChatPanel
                 selectedText={chatSelection?.text ?? ""}
+                currentSelectedText={liveSelectedText}
                 fullDocument={activeDoc.content}
                 sectionText={chatSelection?.sectionText ?? ""}
                 libraries={activeLibraries}
